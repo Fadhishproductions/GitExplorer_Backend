@@ -44,17 +44,23 @@ export const saveGitHubUser = async (
   }
 };
 
-export const updateFriends = async (req: Request, res: Response): Promise<void>  => {
+export const updateFriends = async (req: Request, res: Response): Promise<void> => {
   const username = req.params.username;
 
   try {
-    const user = await User.findOne({ login: username });
-    if (!user)  {
+    const user = await User.findOne({ login: username, isDeleted: false });
+    if (!user) {
       res.status(404).json({ message: 'User not found in DB' });
-      return
+      return;
     }
 
-    // Fetch followers and following from GitHub
+    // ✅ Check if mutual friends are already saved
+    if (user.friends && user.friends.length > 0) {
+      res.status(200).json({ message: 'Mutual friends already exist in DB', friends: user.friends });
+      return;
+    }
+
+    // 🌀 Fetch followers and following from GitHub
     const [followersRes, followingRes] = await Promise.all([
       axios.get(`https://api.github.com/users/${username}/followers`),
       axios.get(`https://api.github.com/users/${username}/following`)
@@ -63,43 +69,40 @@ export const updateFriends = async (req: Request, res: Response): Promise<void> 
     const followers = followersRes.data.map((u: any) => u.login);
     const following = followingRes.data.map((u: any) => u.login);
 
-    // Find mutuals
+    // ✅ Get mutuals
     const mutuals = following.filter((login: string) => followers.includes(login));
 
-    // Save mutuals as friends
+    // ✅ Save mutuals to user
     user.friends = mutuals;
     await user.save();
 
-    res.status(200).json({ message: 'Friends updated', friends: mutuals });
+    res.status(200).json({ message: 'Mutual friends updated and saved', friends: mutuals });
   } catch (err: any) {
     console.error(err);
-    res.status(500).json({ message: 'Error updating friends', error: err.message });
+    res.status(500).json({ message: 'Error updating mutual friends', error: err.message });
   }
 };
 
 export const searchUsers = async (req: Request, res: Response) => {
-  const { login, name, location } = req.query;
+  const { query } = req.query;
 
   try {
-    const query: any = { isDeleted: false };
-
-    if (login) {
-      query.login = { $regex: new RegExp(login as string, 'i') }; // case-insensitive
-    }
-    if (name) {
-      query.name = { $regex: new RegExp(name as string, 'i') };
-    }
-    if (location) {
-      query.location = { $regex: new RegExp(location as string, 'i') };
-    }
-
-    const users = await User.find(query);
+    const searchRegex = new RegExp(query as string, 'i'); // case-insensitive
+    const users = await User.find({
+      isDeleted: false,
+      $or: [
+        { login: { $regex: searchRegex } },
+        { name: { $regex: searchRegex } },
+        { location: { $regex: searchRegex } },
+      ],
+    });
 
     res.status(200).json({ count: users.length, users });
   } catch (err: any) {
     res.status(500).json({ message: 'Search failed', error: err.message });
   }
 };
+
 
 export const updateUserInfo = async (req: Request, res: Response):Promise<void> => {
   const { username } = req.params;
